@@ -1,0 +1,199 @@
+{
+    "name": "pl_hc_bulk",
+    "properties": {
+        "activities": [
+            {
+                "name": "ForEach1",
+                "type": "ForEach",
+                "dependsOn": [],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@variables('table_data')",
+                        "type": "Expression"
+                    },
+                    "batchCount": 28,
+                    "activities": [
+                        {
+                            "name": "Copy data1_copy1",
+                            "type": "Copy",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "AzureDatabricksDeltaLakeSource",
+                                    "query": {
+                                        "value": "@item().query",
+                                        "type": "Expression"
+                                    },
+                                    "exportSettings": {
+                                        "type": "AzureDatabricksDeltaLakeExportCommand"
+                                    }
+                                },
+                                "sink": {
+                                    "type": "ParquetSink",
+                                    "storeSettings": {
+                                        "type": "AzureBlobStorageWriteSettings"
+                                    },
+                                    "formatSettings": {
+                                        "type": "ParquetWriteSettings"
+                                    }
+                                },
+                                "enableStaging": true,
+                                "stagingSettings": {
+                                    "linkedServiceName": {
+                                        "referenceName": "AzureBlobStorage_japdbpdingretailst",
+                                        "type": "LinkedServiceReference"
+                                    },
+                                    "path": "devtesting"
+                                }
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "DS_azure_databricks_delta_lake",
+                                    "type": "DatasetReference"
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "ds_eny",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "folder": {
+                                            "value": "@concat(\n    'devtestinghc/',\n    item().table_path,\n    '/',\n    formatDateTime(utcNow(), 'yyyyMMdd')\n)",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "name": "set_failed_tables_error",
+                            "type": "AppendVariable",
+                            "dependsOn": [
+                                {
+                                    "activity": "Copy data1_copy1",
+                                    "dependencyConditions": [
+                                        "Failed"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "variableName": "failed_tables",
+                                "value": {
+                                    "value": "@concat(\n    '{\"table_name\":\"', item().table_path, \n    '\",\"error\":', activity('Copy data1_copy1').Error,'}'\n)",
+                                    "type": "Expression"
+                                }
+                            }
+                        },
+                        {
+                            "name": "set_success_tables",
+                            "type": "AppendVariable",
+                            "dependsOn": [
+                                {
+                                    "activity": "Copy data1_copy1",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "variableName": "success_tables",
+                                "value": {
+                                    "value": "@item().table_path",
+                                    "type": "Expression"
+                                }
+                            }
+                        },
+                        {
+                            "name": "set_failed_list",
+                            "type": "AppendVariable",
+                            "dependsOn": [
+                                {
+                                    "activity": "Copy data1_copy1",
+                                    "dependencyConditions": [
+                                        "Failed"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "variableName": "failed_list",
+                                "value": {
+                                    "value": "@item()",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "set_final_status",
+                "type": "SetVariable",
+                "dependsOn": [
+                    {
+                        "activity": "ForEach1",
+                        "dependencyConditions": [
+                            "Completed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "variableName": "final_status",
+                    "value": {
+                        "value": "@concat(\n    '{\"success_tables\":', string(variables('success_tables')),\n    ',\"failed_tables_details\":', string(variables('failed_tables')), \n    ',\"failed_list\":', string(variables('failed_list')), \n    '}'\n)\n",
+                        "type": "Expression"
+                    }
+                }
+            }
+        ],
+        "variables": {
+            "table_data": {
+                "type": "Array",
+                "defaultValue": [
+                    {
+                        "table_path": "devtest",
+                        "query": "Select * from tab_name"
+                    },
+                    {
+                        "table_path": "devtest",
+                        "query": "Select * from tab_name"
+                    }
+                ]
+            },
+            "failed_tables": {
+                "type": "Array"
+            },
+            "success_tables": {
+                "type": "Array"
+            },
+            "failed_list": {
+                "type": "Array"
+            },
+            "final_status": {
+                "type": "String"
+            }
+        },
+        "folder": {
+            "name": "HC"
+        },
+        "annotations": [],
+        "lastPublishTime": "2025-09-16T11:12:13Z"
+    },
+    "type": "Microsoft.DataFactory/factories/pipelines"
+}

@@ -1,0 +1,230 @@
+{
+    "name": "pl_pipeline_name",
+    "properties": {
+        "activities": [
+            {
+                "name": "Lkp_table_config",
+                "type": "Lookup",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "OracleSource",
+                        "oracleReaderQuery": {
+                            "value": "select RAWTOHEX(a.ID) AS ID, a.PIPELINE_NAME, a.SRC_SCHEMA, a.SRC_TABLE, a.TGT_PATH, a.WATERMARK_COL,\na.OWNER_EMAIL, a.NOTIFICATION_EMAILS, b.watermark_value\nfrom CONTROL_DB.ADF_PIPELINE_METADATA a\nleft join (\n  select METADATA_ID, max(@{variables('metadata_watermark_col')}) as watermark_value from CONTROL_DB.ADF_EXECUTION_HISTORY \n  c  group by METADATA_ID \n) b\non a.id = b.METADATA_ID \nwhere a.IS_ACTIVE = 1 and a.LOAD_TYPE = 'incremental'\nand PIPELINE_NAME = '@{pipeline().Pipeline}'",
+                            "type": "Expression"
+                        },
+                        "partitionOption": "None",
+                        "numberPrecision": 38,
+                        "numberScale": 18,
+                        "queryTimeout": "02:00:00"
+                    },
+                    "dataset": {
+                        "referenceName": "Oracle_CONTROL_DB_get_metadata",
+                        "type": "DatasetReference"
+                    }
+                }
+            },
+            {
+                "name": "Lkp_get_max_delta",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Lkp_table_config",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlServerSource",
+                        "sqlReaderQuery": {
+                            "value": "@concat(\n    'select max(\"',\n    activity('Lkp_table_config').output.firstRow.WATERMARK_COL,\n    '\") as max_watermark_value from ',\n    activity('Lkp_table_config').output.firstRow.SRC_TABLE\n)",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_SQL_SERVER",
+                        "type": "DatasetReference"
+                    }
+                }
+            },
+            {
+                "name": "check_for_new_data",
+                "type": "IfCondition",
+                "dependsOn": [
+                    {
+                        "activity": "Lkp_get_max_delta",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    },
+                    {
+                        "activity": "setStartTime",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "expression": {
+                        "value": "@or(\n    or(\n        equals(activity('Lkp_table_config').output.firstRow.WATERMARK_VALUE, null),\n        equals(trim(activity('Lkp_table_config').output.firstRow.WATERMARK_VALUE), '')\n    ),\n    greater(\n        activity('Lkp_get_max_delta').output.firstRow.max_watermark_value,\n        activity('Lkp_table_config').output.firstRow.WATERMARK_VALUE\n    )\n)",
+                        "type": "Expression"
+                    },
+                    "ifTrueActivities": [
+                        {
+                            "name": "copyData",
+                            "type": "Copy",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlServerSource",
+                                    "sqlReaderQuery": {
+                                        "value": "@concat(\n        'select * from ',\n    activity('Lkp_table_config').output.firstRow.SRC_TABLE,\n    ' where ',\n    if(\n            and(\n                not(equals(activity('Lkp_table_config').output.firstRow.WATERMARK_VALUE, null)),\n            not(equals(activity('Lkp_table_config').output.firstRow.WATERMARK_VALUE, ''))\n        ),\n        concat(\n                activity('Lkp_table_config').output.firstRow.WATERMARK_COL,\n            ' >= ''',\n            activity('Lkp_table_config').output.firstRow.WATERMARK_VALUE,\n            ''' and '\n        ),\n        ''\n    ),\n    activity('Lkp_table_config').output.firstRow.WATERMARK_COL,\n    ' < ''',\n    activity('Lkp_get_max_delta').output.firstRow.max_watermark_value,\n    '''  and ',\n\n   activity('Lkp_table_config').output.firstRow.WATERMARK_COL,  '>= DATEADD(DAY, -30, GETDATE())'\n)\n ",
+                                        "type": "Expression"
+                                    },
+                                    "queryTimeout": "02:00:00",
+                                    "partitionOption": "None"
+                                },
+                                "sink": {
+                                    "type": "ParquetSink",
+                                    "storeSettings": {
+                                        "type": "AzureBlobStorageWriteSettings"
+                                    },
+                                    "formatSettings": {
+                                        "type": "ParquetWriteSettings"
+                                    }
+                                },
+                                "enableStaging": false,
+                                "translator": {
+                                    "type": "TabularTranslator",
+                                    "typeConversion": true,
+                                    "typeConversionSettings": {
+                                        "allowDataTruncation": true,
+                                        "treatBooleanAsNumber": false
+                                    }
+                                }
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "DS_SQL_SERVER",
+                                    "type": "DatasetReference"
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "Parquet_adls",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "folder_path": {
+                                            "value": "@concat(\n\n    activity('Lkp_table_config').output.firstRow.TGT_PATH,\n\n    '/',\n\n    activity('Lkp_table_config').output.firstRow.SRC_TABLE\n\n)",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "name": "script_update_metadata",
+                            "type": "Script",
+                            "dependsOn": [
+                                {
+                                    "activity": "copyData",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "linkedServiceName": {
+                                "referenceName": "ORA_CONTROL_DB",
+                                "type": "LinkedServiceReference"
+                            },
+                            "typeProperties": {
+                                "scripts": [
+                                    {
+                                        "type": "Query",
+                                        "text": {
+                                            "value": "INSERT INTO CONTROL_DB.adf_execution_history (\n    PIPELINE_RUN_ID,\n    METADATA_ID,\n    START_TIME,\n    END_TIME,\n    STATUS,\n    @{variables('metadata_watermark_col')},\n    ROWS_PROCESSED,\n    DATA_VOLUME_MB,\n    ERROR_MESSAGE\n)\nVALUES (\n    '@{pipeline().RunId}',\n    '@{activity('Lkp_table_config').output.firstRow.ID}',\n    TO_TIMESTAMP('@{formatDateTime(convertTimeZone(variables('pipeline_start_time'),'UTC','India Standard Time'),'yyyy-MM-dd HH:mm:ss')}', 'YYYY-MM-DD HH24:MI:SS'),\n    TO_TIMESTAMP('@{formatDateTime(convertTimeZone(utcNow(),'UTC','India Standard Time'),'yyyy-MM-dd HH:mm:ss')}', 'YYYY-MM-DD HH24:MI:SS'),\n    'Success',\n    TO_TIMESTAMP('@{activity('Lkp_get_max_delta').output.firstRow.max_watermark_value}', 'YYYY-MM-DD\"T\"HH24:MI:SS.FF3'),\n    @{activity('copyData').output.rowsCopied},\n    @{activity('copyData').output.dataRead},\n    ''\n)",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                ],
+                                "scriptBlockExecutionTimeout": "02:00:00"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "setStartTime",
+                "type": "SetVariable",
+                "dependsOn": [],
+                "policy": {
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "variableName": "pipeline_start_time",
+                    "value": {
+                        "value": "@utcNow()",
+                        "type": "Expression"
+                    }
+                }
+            }
+        ],
+        "variables": {
+            "metadata_watermark_col": {
+                "type": "String",
+                "defaultValue": "WATERMARK_VALUE_DATETIME"
+            },
+            "pipeline_start_time": {
+                "type": "String"
+            },
+            "EndTime": {
+                "type": "String"
+            }
+        },
+        "folder": {
+            "name": "HR"
+        },
+        "annotations": [],
+        "lastPublishTime": "2025-10-14T11:52:14Z"
+    },
+    "type": "Microsoft.DataFactory/factories/pipelines"
+}
