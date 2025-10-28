@@ -19,7 +19,7 @@
 
 ---
 
-## 🧩 Table to ADLS Pipeline
+## 🧩 Table to ADLS Incremental Pipeline
 
 <p align="center">
   <img src="db_to_adls_delta/full_image.PNG" width="85%" alt="DB to ADLS Full Pipeline"/>
@@ -33,7 +33,7 @@
 
 ---
 
-## 🍃 Mongo Table to ADLS Pipeline
+## 🍃 Mongo Table to ADLS Incremental Pipeline
 
 <p align="center">
   <img src="mongo_to_adls_delta/full_image.PNG" width="85%" alt="Mongo to ADLS Pipeline"/>
